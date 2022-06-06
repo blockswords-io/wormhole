@@ -10,6 +10,8 @@ import {
   OnApplicationComplete,
   SuggestedParams,
 } from "algosdk";
+import { Account as nearAccount } from "near-api-js";
+const BN = require("bn.js");
 import { ethers, PayableOverrides } from "ethers";
 import { isNativeDenom } from "..";
 import { getMessageFee, optin, TransactionSignerPair } from "../algorand";
@@ -19,6 +21,8 @@ import { importTokenWasm } from "../solana/wasm";
 import { textToHexString, textToUint8Array, uint8ArrayToHex } from "../utils";
 import { safeBigIntToNumber } from "../utils/bigint";
 import { createNonce } from "../utils/createNonce";
+import { parseSequenceFromLogNear } from "../bridge/parseSequenceFromLog";
+import { logNearGas } from "../utils/near";
 
 export async function attestFromEth(
   tokenBridgeAddress: string,
@@ -197,4 +201,53 @@ export async function attestFromAlgorand(
   txs.push({ tx: appTxn, signer: null });
 
   return txs;
+}
+
+/**
+ * Attest an already created asset
+ * If you create a new asset on near and want to transfer it elsewhere,
+ * you create an attestation for it on near... pass that vaa to the target chain..
+ * submit it.. then you can transfer from near to that target chain
+ * @param client An Near account client
+ * @param tokenBridge The account for the token bridge
+ * @param asset The account for the asset
+ * @returns sequenceNumber
+ */
+export async function attestTokenFromNear(
+  client: nearAccount,
+  tokenBridge: string,
+  asset: string
+): Promise<[number, string]> {
+  let result = await client.functionCall({
+    contractId: tokenBridge,
+    methodName: "attest_token",
+    args: { token: asset },
+    gas: new BN("100000000000000"),
+  });
+
+  logNearGas(result, "attest_token " + asset);
+
+  return parseSequenceFromLogNear(result);
+}
+
+/**
+ * Attest NEAR
+ * @param client An Near account client
+ * @param tokenBridge The account for the token bridge
+ * @returns sequenceNumber
+ */
+export async function attestNearFromNear(
+  client: nearAccount,
+  tokenBridge: string
+): Promise<[number, string]> {
+  let result = await client.functionCall({
+    contractId: tokenBridge,
+    methodName: "attest_near",
+    args: {},
+    gas: new BN("100000000000000"),
+  });
+
+  logNearGas(result, "attest_near");
+
+  return parseSequenceFromLogNear(result);
 }

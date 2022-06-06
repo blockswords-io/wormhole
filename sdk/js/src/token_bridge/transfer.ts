@@ -44,6 +44,9 @@ import {
   WSOL_ADDRESS,
 } from "../utils";
 import { safeBigIntToNumber } from "../utils/bigint";
+import { Account as nearAccount } from "near-api-js";
+const BN = require("bn.js");
+import { parseSequenceFromLogNear } from "../bridge/parseSequenceFromLog";
 
 export async function getAllowanceEth(
   tokenBridgeAddress: string,
@@ -629,4 +632,91 @@ export async function transferFromAlgorand(
   acTxn.fee *= 2;
   txs.push({ tx: acTxn, signer: null });
   return txs;
+}
+
+/**
+ * Transfers an asset from Near to a receiver on another chain
+ * @param client
+ * @param tokenBridge account of the token bridge
+ * @param assetId account
+ * @param qty Quantity to transfer
+ * @param receiver Receiving account
+ * @param chain Reeiving chain
+ * @param fee Transfer fee
+ * @param payload payload for payload3 transfers
+ * @returns Sequence number of confirmation
+ */
+export async function transferTokenFromNear(
+  client: nearAccount,
+  tokenBridge: string,
+  assetId: string,
+  qty: bigint,
+  receiver: string,
+  chain: ChainId | ChainName,
+  fee: bigint,
+  payload: Uint8Array | null = null
+): Promise<[number, string]> {
+  let wormhole = assetId.endsWith("." + tokenBridge);
+
+  let result;
+
+  if (wormhole) {
+    result = await client.functionCall({
+      contractId: tokenBridge,
+      methodName: "send_transfer_wormhole_token",
+      args: { receiver: receiver, chain: chain, fee: fee, payload: payload },
+      attachedDeposit: new BN(qty),
+      gas: new BN("100000000000000"),
+    });
+  } else {
+    result = await client.functionCall({
+      contractId: assetId,
+      methodName: "ft_transfer_call",
+      args: {
+        receiver_id: tokenBridge,
+        amount: qty,
+        msg: JSON.stringify({
+          receiver: receiver,
+          chain: chain,
+          fee: fee,
+          payload: payload,
+        }),
+      },
+      attachedDeposit: new BN("1"),
+      gas: new BN("100000000000000"),
+    });
+  }
+
+  return parseSequenceFromLogNear(result);
+}
+
+/**
+ * Transfers NEAR from Near to a receiver on another chain
+ * @param client
+ * @param tokenBridge account of the token bridge
+ * @param qty Quantity to transfer
+ * @param receiver Receiving account
+ * @param chain Reeiving chain
+ * @param fee Transfer fee
+ * @param payload payload for payload3 transfers
+ * @returns Sequence number of confirmation
+ */
+export async function transferNearFromNear(
+  client: nearAccount,
+  tokenBridge: string,
+  qty: bigint,
+  receiver: string,
+  chain: ChainId | ChainName,
+  fee: bigint,
+  payload: Uint8Array | null = null
+): Promise<[number, string]> {
+  let result = await client.functionCall({
+    contractId: tokenBridge,
+    methodName: "send_transfer_near",
+    args: { receiver: receiver, chain: chain, fee: fee, payload: payload },
+    attachedDeposit: new BN(qty),
+    gas: new BN("100000000000000"),
+  });
+
+  return parseSequenceFromLogNear(result);
 }

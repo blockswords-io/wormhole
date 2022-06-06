@@ -7,6 +7,9 @@ import { TransactionSignerPair, _submitVAAAlgorand } from "../algorand";
 import { Bridge__factory } from "../ethers-contracts";
 import { ixFromRust } from "../solana";
 import { importTokenWasm } from "../solana/wasm";
+import { Account as nearAccount } from "near-api-js";
+const BN = require("bn.js");
+const nearApi = require("near-api-js");
 
 export async function createWrappedOnEth(
   tokenBridgeAddress: string,
@@ -69,4 +72,37 @@ export async function createWrappedOnAlgorand(
     attestVAA,
     senderAddr
   );
+}
+
+export async function createWrappedOnNear(
+  client: nearAccount,
+  tokenBridge: string,
+  attestVAA: Uint8Array
+): Promise<string> {
+  // Could we just pass in the vaa already as hex?
+  let vaa = Buffer.from(attestVAA).toString("hex");
+
+  // attesting is so fricken expensive gas wise,  submit_vaa cache's
+  // the "good" status of the vaa after the first call so that the
+  // second call can just spent all its gas on deploying the new
+  // contract...  I would love to work with somebody from Near on how
+  // to make this happen in a single call.
+
+  await client.functionCall({
+    contractId: tokenBridge,
+    methodName: "submit_vaa",
+    args: { vaa: vaa },
+    attachedDeposit: new BN("7900000000000000000"), // most should get refunded
+    gas: new BN("300000000000000"),
+  });
+
+  let result = await client.functionCall({
+    contractId: tokenBridge,
+    methodName: "submit_vaa",
+    args: { vaa: vaa },
+    attachedDeposit: new BN("7900000000000000000"), // most should get refunded
+    gas: new BN("300000000000000"),
+  });
+
+  return nearApi.providers.getTransactionLastResult(result);
 }

@@ -22,6 +22,9 @@ import {
 } from "../utils";
 import { hexToNativeString } from "../utils/array";
 import { parseTransferPayload } from "../utils/parseVaa";
+import { Account as nearAccount } from "near-api-js";
+const nearApi = require("near-api-js");
+const BN = require("bn.js");
 
 export async function redeemOnEth(
   tokenBridgeAddress: string,
@@ -218,4 +221,29 @@ export async function redeemOnAlgorand(
     vaa,
     senderAddr
   );
+}
+
+/**
+ * This basically just submits the VAA to Near
+ * @param client 
+ * @param tokenBridge Token bridge ID
+ * @param vaa The VAA to be redeemed
+ * @returns Transaction ID(s)
+ */
+export async function redeemOnNear(
+  client: nearAccount,
+  tokenBridge: string,
+  vaa: Uint8Array
+): Promise<String> {
+    let result = await client.functionCall({
+        contractId: tokenBridge,
+        methodName: "submit_vaa",
+        args: {
+            vaa: vaa,
+        },
+        attachedDeposit: new BN("100000000000000000000000"),
+        gas: new BN("300000000000000"),
+    });
+
+  return nearApi.providers.getTransactionLastResult(result);
 }

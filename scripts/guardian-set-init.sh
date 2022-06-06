@@ -76,6 +76,7 @@ ethTokenBridge=$(jq --raw-output '.chains."2".contracts.tokenBridgeEmitterAddres
 terraTokenBridge=$(jq --raw-output '.chains."3".contracts.tokenBridgeEmitterAddress' $addressesJson)
 bscTokenBridge=$(jq --raw-output '.chains."4".contracts.tokenBridgeEmitterAddress' $addressesJson)
 algoTokenBridge=$(jq --raw-output '.chains."8".contracts.tokenBridgeEmitterAddress' $addressesJson)
+nearTokenBridge=$(jq --raw-output '.chains."15".contracts.tokenBridgeEmitterAddress' $addressesJson)
 
 solNFTBridge=$(jq --raw-output '.chains."1".contracts.nftBridgeEmitterAddress' $addressesJson)
 ethNFTBridge=$(jq --raw-output '.chains."2".contracts.nftBridgeEmitterAddress' $addressesJson)
@@ -95,6 +96,7 @@ ethTokenBridgeVAA=$(npm --prefix clients/js start --silent -- generate registrat
 terraTokenBridgeVAA=$(npm --prefix clients/js start --silent -- generate registration -m TokenBridge -c terra -a ${terraTokenBridge} -g ${guardiansPrivateCSV})
 bscTokenBridgeVAA=$(npm --prefix clients/js start --silent -- generate registration -m TokenBridge -c bsc -a ${bscTokenBridge} -g ${guardiansPrivateCSV})
 algoTokenBridgeVAA=$(npm --prefix clients/js start --silent -- generate registration -m TokenBridge -c algorand -a ${algoTokenBridge} -g ${guardiansPrivateCSV})
+nearTokenBridgeVAA=$(npm --prefix clients/js start --silent -- generate registration -m TokenBridge -c near -a ${nearTokenBridge} -g ${guardiansPrivateCSV})
 
 
 # 5) create nft bridge registration VAAs
@@ -113,6 +115,7 @@ ethTokenBridge="REGISTER_ETH_TOKEN_BRIDGE_VAA"
 terraTokenBridge="REGISTER_TERRA_TOKEN_BRIDGE_VAA"
 bscTokenBridge="REGISTER_BSC_TOKEN_BRIDGE_VAA"
 algoTokenBridge="REGISTER_ALGO_TOKEN_BRIDGE_VAA"
+nearTokenBridge="REGISTER_NEAR_TOKEN_BRIDGE_VAA"
 
 solNFTBridge="REGISTER_SOL_NFT_BRIDGE_VAA"
 ethNFTBridge="REGISTER_ETH_NFT_BRIDGE_VAA"
@@ -151,6 +154,9 @@ upsert_env_file $envFile $bscTokenBridge $bscTokenBridgeVAA
 upsert_env_file $ethFile $algoTokenBridge $algoTokenBridgeVAA
 upsert_env_file $envFile $algoTokenBridge $algoTokenBridgeVAA
 
+# near token bridge
+upsert_env_file $ethFile $nearTokenBridge $nearTokenBridgeVAA
+upsert_env_file $envFile $nearTokenBridge $nearTokenBridgeVAA
 
 # 7) copy the local .env file to the solana & terra dirs, if the script is running on the host machine
 # chain dirs will not exist if running in docker for Tilt, only if running locally. check before copying.
@@ -161,7 +167,7 @@ if [[ -d ./ethereum ]]; then
 fi
 
 # copy the hex envFile to each of the non-EVM chains
-for envDest in ./solana/.env ./terra/tools/.env ./algorand/.env; do
+for envDest in ./solana/.env ./terra/tools/.env ./algorand/.env ./near/.env; do
     dirname=$(dirname $envDest)
     if [[ -d "$dirname" ]]; then
         echo "copying $envFile to $envDest"
