@@ -97,7 +97,7 @@ pub struct TransferMsgPayload {
 #[derive(BorshDeserialize, BorshSerialize, PanicOnDefault)]
 pub struct TokenData {
     meta: Vec<u8>,
-    asset_id: u32,
+    account: String,
 }
 
 #[near_bindgen]
@@ -220,9 +220,8 @@ fn vaa_transfer(storage: &mut Portal, vaa: state::ParsedVAA) -> Promise {
         env::panic_str("AssetNotAttested");
     }
 
-    let asset_id = storage.tokens.get(&tkey).unwrap().asset_id;
+    let bridge_token_account = storage.tokens.get(&tkey).unwrap().account;
 
-    let bridge_token_account = format!("{}.{}", asset_id, env::current_account_id());
     env::log_str(&bridge_token_account);
 
     if !env::is_valid_account_id(bridge_token_account.as_bytes()) {
@@ -262,28 +261,27 @@ fn vaa_asset_meta(storage: &mut Portal, vaa: state::ParsedVAA) -> Promise {
         env::panic_str("CannotAttestNearAssets");
     }
 
-    let asset_id;
     let fresh;
 
+    let bridge_token_account;
+
     if storage.tokens.contains_key(&tkey) {
-        env::log_str(&format!("portal/{}#{}: vaa_asset_meta", file!(), line!()));
-        asset_id = storage.tokens.get(&tkey).unwrap().asset_id;
+        bridge_token_account = storage.tokens.get(&tkey).unwrap().account;
         fresh = false;
     } else {
-        env::log_str(&format!("portal/{}#{}: vaa_asset_meta", file!(), line!()));
         storage.last_asset += 1;
-        asset_id = storage.last_asset;
+        let asset_id = storage.last_asset;
+        bridge_token_account = format!("{}.{}", asset_id, env::current_account_id());
 
         let d = TokenData {
             meta: data.to_vec(),
-            asset_id,
+            account: bridge_token_account.clone()
         };
         storage.tokens.insert(&tkey, &d);
         storage.token_map.insert(&asset_id, &tkey);
         fresh = true;
     }
 
-    let bridge_token_account = format!("{}.{}", asset_id, env::current_account_id());
     env::log_str(&bridge_token_account);
 
     if !env::is_valid_account_id(bridge_token_account.as_bytes()) {
@@ -551,13 +549,8 @@ impl Portal {
     }
 
     pub fn is_wormhole(&self, token: &String) -> bool {
-        let acct = env::current_account_id();
-        let account = acct.as_str();
-        let a = &token[(token.len() - account.len())..];
-
-        env::log_str(&format!("a {} account {} token {}", &a, &account, &token));
-
-        a == account
+        let astr = format!(".{}", env::current_account_id().as_str());
+        token.ends_with(&astr) 
     }
 
     pub fn get_foreign_asset(&self, chain: u16, asset_str: String) -> String {
@@ -566,18 +559,66 @@ impl Portal {
         let p = [asset, chain.to_be_bytes().to_vec()].concat();
 
         if self.tokens.contains_key(&p) {
-            return format!(
-                "{}.{}",
-                self.tokens.get(&p).unwrap().asset_id,
-                env::current_account_id()
-            );
+            return self.tokens.get(&p).unwrap().account;
         }
 
         "".to_string()
     }
 
+    #[payable]
+    pub fn register_account(& mut self, account: String) -> String {
+        let astr = format!(".{}", env::current_account_id().as_str());
+        if account.ends_with(&astr) {
+            env::panic_str("CannotRegisterWormholeAccount");
+        }
+
+        let storage_used = env::storage_usage() as i128;
+
+        let account_hash = env::sha256(&account.as_bytes());
+        let ret = hex::encode(&account_hash);
+        let p = [account_hash, CHAIN_ID_NEAR.to_be_bytes().to_vec()].concat();
+        if !self.tokens.contains_key(&p) {
+            let d = TokenData {
+                meta: b"".to_vec(),
+                account: account
+            };
+            self.tokens.insert(&p, &d);
+        }
+
+        let delta = (env::storage_usage() as i128 - storage_used)
+            * env::storage_byte_cost() as i128;
+
+        let refund = env::attached_deposit() as i128 - delta;
+        if refund < 0 {
+            env::panic_str("InvalidStorageDeposit");
+        }
+        if refund > 0 {
+            env::log_str(&format!(
+                "portal/{}#{}: update_contract_done: refund {} to {}",
+                file!(),
+                line!(),
+                refund,
+                env::predecessor_account_id()
+            ));
+            Promise::new(env::predecessor_account_id()).transfer(refund as u128);
+        }
+
+        ret
+    }
+
+    pub fn lookup_account_hash(& self, account: String) -> (bool, String) {
+        let account_hash = env::sha256(&account.as_bytes());
+        let ret = hex::encode(&account_hash);
+        let p = [account_hash, CHAIN_ID_NEAR.to_be_bytes().to_vec()].concat();
+        if !self.tokens.contains_key(&p) {
+            (false, ret)
+        } else {
+            (true, ret)
+        }
+    }
+
     pub fn send_transfer_wormhole_token(
-        &mut self,
+        &self,
         amount: u128,
         token: String,
         receiver: String,
@@ -603,7 +644,7 @@ impl Portal {
 
     #[private]
     pub fn send_transfer_token_wormhole_callback(
-        &mut self,
+        &self,
         #[callback_result] payload: Result<String, PromiseError>,
     ) -> Promise {
         if payload.is_err() {
