@@ -109,7 +109,6 @@ pub struct Portal {
     good: UnorderedSet<Vec<u8>>,
     owner_pk: PublicKey,
     emitter_registration: LookupMap<u16, Vec<u8>>,
-    hash_map: LookupMap<Vec<u8>, String>,
     tokens: LookupMap<Vec<u8>, TokenData>,
     token_map: LookupMap<u32, Vec<u8>>,
     last_asset: u32,
@@ -125,7 +124,6 @@ impl Default for Portal {
             good: UnorderedSet::new(b"g".to_vec()),
             owner_pk: env::signer_account_pk(),
             emitter_registration: LookupMap::new(b"c".to_vec()),
-            hash_map: LookupMap::new(b"h".to_vec()),
             tokens: LookupMap::new(b"t".to_vec()),
             token_map: LookupMap::new(b"m".to_vec()),
             last_asset: 0,
@@ -275,7 +273,7 @@ fn vaa_asset_meta(storage: &mut Portal, vaa: state::ParsedVAA) -> Promise {
 
         let d = TokenData {
             meta: data.to_vec(),
-            account: bridge_token_account.clone()
+            account: bridge_token_account.clone(),
         };
         storage.tokens.insert(&tkey, &d);
         storage.token_map.insert(&asset_id, &tkey);
@@ -446,11 +444,12 @@ impl Portal {
     ) -> Promise {
         require!(
             env::prepaid_gas() >= Gas(100_000_000_000_000),
-            &format!("portal/{}#{}: more gas is required {}",
-                     file!(),
-                     line!(),
-                     serde_json::to_string(&env::prepaid_gas()).unwrap())
-
+            &format!(
+                "portal/{}#{}: more gas is required {}",
+                file!(),
+                line!(),
+                serde_json::to_string(&env::prepaid_gas()).unwrap()
+            )
         );
 
         let amount = env::attached_deposit();
@@ -550,7 +549,7 @@ impl Portal {
 
     pub fn is_wormhole(&self, token: &String) -> bool {
         let astr = format!(".{}", env::current_account_id().as_str());
-        token.ends_with(&astr) 
+        token.ends_with(&astr)
     }
 
     pub fn get_foreign_asset(&self, chain: u16, asset_str: String) -> String {
@@ -566,7 +565,7 @@ impl Portal {
     }
 
     #[payable]
-    pub fn register_account(& mut self, account: String) -> String {
+    pub fn register_account(&mut self, account: String) -> String {
         let astr = format!(".{}", env::current_account_id().as_str());
         if account.ends_with(&astr) {
             env::panic_str("CannotRegisterWormholeAccount");
@@ -580,13 +579,13 @@ impl Portal {
         if !self.tokens.contains_key(&p) {
             let d = TokenData {
                 meta: b"".to_vec(),
-                account: account
+                account: account,
             };
             self.tokens.insert(&p, &d);
         }
 
-        let delta = (env::storage_usage() as i128 - storage_used)
-            * env::storage_byte_cost() as i128;
+        let delta =
+            (env::storage_usage() as i128 - storage_used) * env::storage_byte_cost() as i128;
 
         let refund = env::attached_deposit() as i128 - delta;
         if refund < 0 {
@@ -606,7 +605,7 @@ impl Portal {
         ret
     }
 
-    pub fn lookup_account_hash(& self, account: String) -> (bool, String) {
+    pub fn lookup_account_hash(&self, account: String) -> (bool, String) {
         let account_hash = env::sha256(&account.as_bytes());
         let ret = hex::encode(&account_hash);
         let p = [account_hash, CHAIN_ID_NEAR.to_be_bytes().to_vec()].concat();
@@ -686,11 +685,12 @@ impl Portal {
     pub fn attest_near(&mut self) -> Promise {
         require!(
             env::prepaid_gas() >= Gas(100_000_000_000_000),
-            &format!("portal/{}#{}: more gas is required {}",
-                     file!(),
-                     line!(),
-                     serde_json::to_string(&env::prepaid_gas()).unwrap())
-
+            &format!(
+                "portal/{}#{}: more gas is required {}",
+                file!(),
+                line!(),
+                serde_json::to_string(&env::prepaid_gas()).unwrap()
+            )
         );
 
         let p = [
@@ -716,10 +716,12 @@ impl Portal {
     pub fn attest_token(&mut self, token: String) -> Promise {
         require!(
             env::prepaid_gas() >= Gas(100_000_000_000_000),
-            &format!("portal/{}#{}: more gas is required {}",
-                     file!(),
-                     line!(),
-                     serde_json::to_string(&env::prepaid_gas()).unwrap())
+            &format!(
+                "portal/{}#{}: more gas is required {}",
+                file!(),
+                line!(),
+                serde_json::to_string(&env::prepaid_gas()).unwrap()
+            )
         );
 
         env::log_str(&format!(
@@ -730,10 +732,46 @@ impl Portal {
             serde_json::to_string(&env::prepaid_gas()).unwrap()
         ));
 
-        ext_ft_contract::ext(AccountId::try_from(token.clone()).unwrap())
-            .with_static_gas(Gas(10_000_000_000_000))
-            .ft_metadata()
-            .then(Self::ext(env::current_account_id()).attest_token_callback(token))
+        if self.is_wormhole(&token) {
+            let acct = env::current_account_id();
+            let account = acct.as_str();
+            let a = &token[..(token.len() - account.len() - 1)];
+
+            let asset_id = a.parse().unwrap();
+
+            if !self.token_map.contains_key(&asset_id) {
+                env::panic_str("UnknownAssetId");
+            }
+
+            let tref = &self.token_map.get(&asset_id).unwrap();
+
+            if !self.tokens.contains_key(&tref) {
+                env::panic_str("InvalidWormholeToken");
+            }
+            let p = [
+                (2_u8).to_be_bytes().to_vec(),
+                self.tokens.get(&tref).unwrap().meta,
+            ]
+            .concat();
+            if p.len() != 100 {
+                env::log_str(&format!("len: {}  val: {}", p.len(), hex::encode(p)));
+                env::panic_str("Formatting error");
+            }
+            ext_worm_hole::ext(self.core.clone())
+                .publish_message(hex::encode(p), env::block_height() as u32)
+                .then(Self::ext(env::current_account_id()).emitter_callback())
+        } else {
+            let account_hash = env::sha256(&token.as_bytes());
+            let tref = [account_hash, CHAIN_ID_NEAR.to_be_bytes().to_vec()].concat();
+            if !self.tokens.contains_key(&tref) {
+                env::panic_str("UnregisteredNativeToken");
+            }
+
+            ext_ft_contract::ext(AccountId::try_from(token.clone()).unwrap())
+                .with_static_gas(Gas(10_000_000_000_000))
+                .ft_metadata()
+                .then(Self::ext(env::current_account_id()).attest_token_callback(token))
+        }
     }
 
     #[private]
@@ -755,35 +793,17 @@ impl Portal {
         }
 
         let ft = ft_info.unwrap();
-        let tref = ft.reference;
 
-        let mut p = Vec::new();
-
-        if tref != None {
-            let r = hex::decode(&tref.unwrap()).unwrap();
-            if self.tokens.contains_key(&r) {
-                p = [
-                    (2_u8).to_be_bytes().to_vec(),
-                    self.tokens.get(&r).unwrap().meta,
-                ]
-                .concat();
-            }
-        }
-
-        if p.is_empty() {
-            let h = env::sha256(token.as_bytes());
-            // We should charge for this....
-            self.hash_map.insert(&h, &token);
-            p = [
-                (2_u8).to_be_bytes().to_vec(),
-                h,
-                (CHAIN_ID_NEAR as u16).to_be_bytes().to_vec(),
-                (ft.decimals as u8).to_be_bytes().to_vec(), // yectoNEAR is 1e24 ...
-                byte_utils::extend_string_to_32(&ft.symbol),
-                byte_utils::extend_string_to_32(&ft.name),
-            ]
-            .concat();
-        }
+        let h = env::sha256(token.as_bytes());
+        let p = [
+            (2_u8).to_be_bytes().to_vec(),
+            h,
+            (CHAIN_ID_NEAR as u16).to_be_bytes().to_vec(),
+            (ft.decimals as u8).to_be_bytes().to_vec(), // yectoNEAR is 1e24 ...
+            byte_utils::extend_string_to_32(&ft.symbol),
+            byte_utils::extend_string_to_32(&ft.name),
+        ]
+        .concat();
 
         if p.len() != 100 {
             env::log_str(&format!("len: {}  val: {}", p.len(), hex::encode(p)));
