@@ -141,6 +141,14 @@ fn parse_and_verify_vaa(storage: &Wormhole, data: &[u8]) -> state::ParsedVAA {
         let v = env::ecrecover(&digest, signature, recovery, true).expect("cannot recover key");
         let k = &env::keccak256(&v)[12..32];
         if k != key.bytes {
+            env::log_str(&format!(
+                "portal/{}#{}: signature_error: {} != {}",
+                file!(),
+                line!(),
+                hex::encode(&k),
+                hex::encode(&key.bytes),
+            ));
+
             env::panic_str("GuardianSignatureError");
         }
         pos += 1;
@@ -224,10 +232,12 @@ impl Wormhole {
     pub fn publish_message(&mut self, data: String, nonce: u32) -> Promise {
         require!(
             env::prepaid_gas() >= Gas(10_000_000_000_000),
-            &format!("wormhole/{}#{}: more gas is required {}",
-                     file!(),
-                     line!(),
-                     serde_json::to_string(&env::prepaid_gas()).unwrap())
+            &format!(
+                "wormhole/{}#{}: more gas is required {}",
+                file!(),
+                line!(),
+                serde_json::to_string(&env::prepaid_gas()).unwrap()
+            )
         );
 
         let s = env::predecessor_account_id().to_string();
